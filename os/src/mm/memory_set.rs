@@ -262,6 +262,22 @@ impl MemorySet {
             false
         }
     }
+
+    /// 查找某一虚拟页所在的逻辑段
+    fn find_area(&self, vpn: VirtPageNum) -> Option<usize> {
+        self.areas.iter().position(|x| x.has_page(vpn))
+    }
+
+    /// 删除逻辑段中的一页
+    pub fn area_unmap_one(&mut self, vpn: VirtPageNum) {
+        let _pos = self.find_area(vpn);
+        if let Some(pos) = _pos {
+            let area = self.areas.get_mut(pos).unwrap();
+            area.unmap_one(&mut self.page_table, vpn);
+        } else {
+            panic!("[area_unmap_one] This shouldn't happen!");
+        }
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
@@ -355,6 +371,11 @@ impl MapArea {
             }
             current_vpn.step();
         }
+    }
+
+    /// 判断某虚拟页是否在该逻辑段中
+    pub fn has_page(&self, vpn: VirtPageNum) -> bool {
+        self.vpn_range.into_iter().any(|x| x == vpn)
     }
 }
 

@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use bitflags::*;
 
 bitflags! {
+
     /// page table entry flags
     pub struct PTEFlags: u8 {
         const V = 1 << 0;
@@ -170,4 +171,36 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// 检查指定页表中指定范围内的虚拟页是否存在已被映射的页
+pub fn check_allocated_range(token: usize, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+    let page_table = PageTable::from_token(token);
+    let mut start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+    while start_vpn < end_vpn {
+        let pte = page_table.find_pte(start_vpn);
+        if pte.is_some() && pte.unwrap().is_valid() {
+            return true;
+        }
+        start_vpn.step();
+    }
+
+    false
+}
+
+/// 检查指定页表中指定范围内的虚拟页是否存在未被映射的页
+pub fn check_unallocated_range(token: usize, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+    let page_table = PageTable::from_token(token);
+    let mut start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+    while start_vpn < end_vpn {
+        let pte = page_table.find_pte(start_vpn);
+        if pte.is_none() || !pte.unwrap().is_valid() {
+            return true;
+        }
+        start_vpn.step();
+    }
+
+    false
 }

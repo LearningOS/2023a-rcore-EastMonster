@@ -14,8 +14,11 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{VirtAddr, MapPermission, check_allocated_range, check_unallocated_range};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -79,6 +82,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
+        next_task.first_run_time = get_time_ms();
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -152,6 +156,59 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+}
+
+/// Get the information of current task
+pub fn get_current_task_info() -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current = &inner.tasks[inner.current_task];
+
+    (current.task_status, current.syscall_times, current.first_run_time)
+}
+
+/// Increase the number of system calls for the current task
+pub fn increment_syscall_times(syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].syscall_times[syscall_id] += 1;
+}
+
+/// 查询范围内的虚拟页是否已被映射过
+pub fn current_check_allocated(start_va: VirtAddr, end_va: VirtAddr) -> bool {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let token = inner.tasks[current].memory_set.token();
+
+    check_allocated_range(token, start_va, end_va)
+}
+
+/// 查询范围内的虚拟页是否未被映射过
+pub fn current_check_unallocated(start_va: VirtAddr, end_va: VirtAddr) -> bool {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let token = inner.tasks[current].memory_set.token();
+
+    check_unallocated_range(token, start_va, end_va)
+}
+
+/// 给当前任务申请一块新的内存
+pub fn current_map_area(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].memory_set.insert_framed_area(start_va, end_va, permission);
+}
+
+/// 给当前任务释放一块内存
+pub fn current_unmap_area(start_va: VirtAddr, end_va: VirtAddr) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let mut start = start_va.floor();
+    let end = end_va.ceil();
+
+    while start < end {
+        inner.tasks[current].memory_set.area_unmap_one(start);
+        start.0 += 1; // 这里怎么用不了 step?
     }
 }
 

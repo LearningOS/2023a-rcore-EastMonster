@@ -21,7 +21,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::loader::get_app_data_by_name;
+use crate::{loader::get_app_data_by_name, mm::{VirtAddr, check_allocated_range, check_unallocated_range, MapPermission}, config::MAX_SYSCALL_NUM};
 use alloc::sync::Arc;
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
@@ -114,4 +114,60 @@ lazy_static! {
 ///Add init process to the manager
 pub fn add_initproc() {
     add_task(INITPROC.clone());
+}
+
+// ---
+/// Get the information of current task
+pub fn get_current_task_info() -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
+    let binding = current_task().unwrap();
+    let inner = binding.inner_exclusive_access();
+
+    (inner.task_status, inner.syscall_times, inner.first_run_time)
+}
+
+/// Increase the number of system calls for the current task
+pub fn increment_syscall_times(syscall_id: usize) {
+    let binding = current_task().unwrap();
+    let mut inner = binding.inner_exclusive_access();
+
+    inner.syscall_times[syscall_id] += 1;
+}
+
+/// 查询范围内的虚拟页是否已被映射过
+pub fn current_check_allocated(start_va: VirtAddr, end_va: VirtAddr) -> bool {
+    let binding = current_task().unwrap();
+    let inner = binding.inner_exclusive_access();
+    let token = inner.memory_set.token();
+
+    check_allocated_range(token, start_va, end_va)
+}
+
+/// 查询范围内的虚拟页是否未被映射过
+pub fn current_check_unallocated(start_va: VirtAddr, end_va: VirtAddr) -> bool {
+    let binding = current_task().unwrap();
+    let inner = binding.inner_exclusive_access();
+    let token = inner.memory_set.token();
+
+    check_unallocated_range(token, start_va, end_va)
+}
+
+/// 给当前任务申请一块新的内存
+pub fn current_map_area(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+    let binding = current_task().unwrap();
+    let mut inner = binding.inner_exclusive_access();
+
+    inner.memory_set.insert_framed_area(start_va, end_va, permission);
+}
+
+/// 给当前任务释放一块内存
+pub fn current_unmap_area(start_va: VirtAddr, end_va: VirtAddr) {
+    let binding = current_task().unwrap();
+    let mut inner = binding.inner_exclusive_access();
+    let mut start = start_va.floor();
+    let end = end_va.ceil();
+
+    while start < end {
+        inner.memory_set.area_unmap_one(start);
+        start.0 += 1; // 这里怎么用不了 step?
+    }
 }

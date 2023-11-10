@@ -1,8 +1,12 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
+<<<<<<< HEAD
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::fs::{File, Stdin, Stdout};
+=======
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM, BIG_STRIDE};
+>>>>>>> 617f76d ([11/10] Chapter 5 Lab)
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -71,6 +75,21 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// 初次运行时间
+    pub first_run_time: usize,
+
+    /// 系统调用次数
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    /// Stride
+    pub stride: usize,
+
+    /// 进程优先级
+    pub priority: usize,
+
+    /// Pass
+    pub pass: usize,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +154,11 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    first_run_time: 0,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    stride: 0,
+                    priority: 16,
+                    pass: BIG_STRIDE / 16,
                 })
             },
         };
@@ -216,6 +240,11 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    first_run_time: parent_inner.first_run_time, // NOT SURE
+                    syscall_times: parent_inner.syscall_times, // NOT SURE
+                    stride: parent_inner.stride, // NOT SURE
+                    priority: parent_inner.priority, // NOT SURE
+                    pass: parent_inner.pass, // NOT SURE
                 })
             },
         });
@@ -229,6 +258,19 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// spawn a new process, return pid of new task;
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let mut parent_inner = self.inner_exclusive_access();
+        let task_control_block = Arc::new(TaskControlBlock::new(elf_data));
+        let mut inner = task_control_block.inner_exclusive_access();
+        inner.parent = Some(Arc::downgrade(self));
+        drop(inner);
+
+        parent_inner.children.push(task_control_block.clone());
+
+        task_control_block
     }
 
     /// get pid of process

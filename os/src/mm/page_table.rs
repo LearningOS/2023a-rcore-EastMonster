@@ -276,3 +276,93 @@ impl Iterator for UserBufferIterator {
         }
     }
 }
+
+/// An abstraction over a buffer passed from user space to kernel space
+pub struct UserBuffer {
+    /// A list of buffers
+    pub buffers: Vec<&'static mut [u8]>,
+}
+
+impl UserBuffer {
+    /// Constuct UserBuffer
+    pub fn new(buffers: Vec<&'static mut [u8]>) -> Self {
+        Self { buffers }
+    }
+    /// Get the length of the buffer
+    pub fn len(&self) -> usize {
+        let mut total: usize = 0;
+        for b in self.buffers.iter() {
+            total += b.len();
+        }
+        total
+    }
+}
+
+impl IntoIterator for UserBuffer {
+    type Item = *mut u8;
+    type IntoIter = UserBufferIterator;
+    fn into_iter(self) -> Self::IntoIter {
+        UserBufferIterator {
+            buffers: self.buffers,
+            current_buffer: 0,
+            current_idx: 0,
+        }
+    }
+}
+
+/// An iterator over a UserBuffer
+pub struct UserBufferIterator {
+    buffers: Vec<&'static mut [u8]>,
+    current_buffer: usize,
+    current_idx: usize,
+}
+
+impl Iterator for UserBufferIterator {
+    type Item = *mut u8;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_buffer >= self.buffers.len() {
+            None
+        } else {
+            let r = &mut self.buffers[self.current_buffer][self.current_idx] as *mut _;
+            if self.current_idx + 1 == self.buffers[self.current_buffer].len() {
+                self.current_idx = 0;
+                self.current_buffer += 1;
+            } else {
+                self.current_idx += 1;
+            }
+            Some(r)
+        }
+    }
+}
+
+/// 检查指定页表中指定范围内的虚拟页是否存在已被映射的页
+pub fn check_allocated_range(token: usize, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+    let page_table = PageTable::from_token(token);
+    let mut start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+    while start_vpn < end_vpn {
+        let pte = page_table.find_pte(start_vpn);
+        if pte.is_some() && pte.unwrap().is_valid() {
+            return true;
+        }
+        start_vpn.step();
+    }
+
+    false
+}
+
+/// 检查指定页表中指定范围内的虚拟页是否存在未被映射的页
+pub fn check_unallocated_range(token: usize, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+    let page_table = PageTable::from_token(token);
+    let mut start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+    while start_vpn < end_vpn {
+        let pte = page_table.find_pte(start_vpn);
+        if pte.is_none() || !pte.unwrap().is_valid() {
+            return true;
+        }
+        start_vpn.step();
+    }
+
+    false
+}

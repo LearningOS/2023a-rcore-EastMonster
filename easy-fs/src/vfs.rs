@@ -73,6 +73,14 @@ impl Inode {
             })
         })
     }
+    /// 检查是否存在指定文件
+    pub fn has_inode(&self, name: &str) -> bool {
+        let _fs = self.fs.lock();
+        self.read_disk_inode(|disk_inode| match self.find_inode_id(name, disk_inode) {
+            Some(_) => true,
+            _ => false,
+        })
+    }
     /// Increase the size of a disk inode
     fn increase_size(
         &self,
@@ -169,6 +177,125 @@ impl Inode {
         });
         block_cache_sync_all();
         size
+    }
+    /// 链接一个新文件
+    pub fn link_at(&self, old_name: &str, new_name: &str) -> u32 {
+        let target_inode = self.find(old_name).unwrap();
+        let mut inode_id = 0;
+        let mut fs = self.fs.lock();
+        self.read_disk_inode(|root_inode| {
+            inode_id = self.find_inode_id(old_name, root_inode).unwrap();
+        });
+        let nlink = target_inode.modify_disk_inode(|disk_inode| {
+            disk_inode.nlink += 1;
+            disk_inode.nlink
+        });
+        self.modify_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            self.increase_size(new_size as u32, root_inode, &mut fs);
+            let dirent = DirEntry::new(new_name, inode_id as u32);
+            root_inode.write_at(
+                file_count * DIRENT_SZ,
+                dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+
+        nlink
+    }
+    /// 取消一个文件链接
+    pub fn unlink_at(&self, path: &str) -> u32 {
+        let target_inode = self.find(path).unwrap();
+        let mut _inode_id = 0;
+        let mut _fs = self.fs.lock();
+        let nlink = target_inode.modify_disk_inode(|disk_inode| {
+            disk_inode.nlink -= 1;
+            disk_inode.nlink
+        });
+        drop(_fs);
+
+        if nlink == 0 {
+            target_inode.clear();
+        }
+
+        // 没有提供删除目录项的方法, 暂且清空一下文件名吧
+        let mut _fs = self.fs.lock();
+        self.modify_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let mut dirent_index = 0;
+            // 找到要删除的目录项的位置
+            for i in 0..file_count {
+                let mut dirent = DirEntry::empty();
+                assert_eq!(
+                    root_inode.read_at(i * DIRENT_SZ, dirent.as_bytes_mut(), &self.block_device),
+                    DIRENT_SZ
+                );
+                if dirent.name() == path {
+                    dirent_index = i;
+                    break;
+                }
+            }
+            let new_dirent = DirEntry::new("\0", 0); // o.0
+            root_inode.write_at(
+                dirent_index * DIRENT_SZ,
+                new_dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+
+        // 这段用不了, 先放着...
+        // let mut _fs = self.fs.lock();
+        // self.modify_disk_inode(|root_inode| {
+        //     let file_count = (root_inode.size as usize) / DIRENT_SZ;
+        //     let new_size = (file_count - 1) * DIRENT_SZ;
+        //     let mut dirent_index = 0;
+        //     // 找到要删除的目录项的位置
+        //     for i in 0..file_count {
+        //         let mut dirent = DirEntry::empty();
+        //         assert_eq!(
+        //             root_inode.read_at(i * DIRENT_SZ, dirent.as_bytes_mut(), &self.block_device),
+        //             DIRENT_SZ
+        //         );
+        //         if dirent.name() == path {
+        //             dirent_index = i;
+        //             break;
+        //         }
+        //     }
+        //     let mut vec: Vec<u8> = Vec::with_capacity((file_count - dirent_index - 1) * DIRENT_SZ);
+        //     let read_size = root_inode.read_at(
+        //         dirent_index * DIRENT_SZ,
+        //         vec.as_mut_slice(),
+        //         &self.block_device,
+        //     );
+        //     debug!("unlink read_size: {read_size}"); // 返回值是 0 ...
+        //     let write_size = root_inode.write_at(
+        //         (file_count - 1) * DIRENT_SZ,
+        //         &[0; DIRENT_SZ],
+        //         &self.block_device,
+        //     );
+        //     debug!("unlink write_size: {write_size}");
+        //     let write_size = root_inode.write_at(dirent_index * DIRENT_SZ, &vec, &self.block_device);
+        //     debug!("unlink write_size: {write_size}");
+        //     // 怎么没有 decrease_size... 暴力设置一下吧
+        //     root_inode.size = new_size as u32;
+        // });
+
+        nlink
+    }
+    /// 获取文件状态
+    pub fn status(&self) -> (usize, u32, u32) {
+        let mut stat_mode = 0u32;
+        let nlink = self.read_disk_inode(|disk_inode| {
+            stat_mode |= if disk_inode.is_dir() {
+                0o040000
+            } else {
+                0o100000
+            };
+            disk_inode.nlink
+        });
+
+        (self.block_id, stat_mode, nlink)
     }
     /// Clear the data in current inode
     pub fn clear(&self) {

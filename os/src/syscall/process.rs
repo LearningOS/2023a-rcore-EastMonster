@@ -5,8 +5,8 @@ use core::mem::size_of;
 use alloc::sync::Arc;
 
 use crate::{
-    config::{MAX_SYSCALL_NUM, BIG_STRIDE},
-    loader::get_app_data_by_name,
+    config::{BIG_STRIDE, MAX_SYSCALL_NUM},
+    fs::{open_file, OpenFlags},
     mm::{translated_byte_buffer, translated_refmut, translated_str, MapPermission, VirtAddr},
     task::{
         add_task, current_check_allocated, current_check_unallocated, current_map_area,
@@ -268,9 +268,10 @@ pub fn sys_spawn(_path: *const u8) -> isize {
     trace!("kernel:pid[{}] sys_spawn", current_task().unwrap().pid.0);
     let token = current_user_token();
     let path = translated_str(token, _path);
-    if let Some(data) = get_app_data_by_name(path.as_str()) {
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+        let all_data = app_inode.read_all();
         let task = current_task().unwrap();
-        let new_task = task.spawn(data);
+        let new_task = task.spawn(all_data.as_slice());
         let pid = new_task.getpid();
         add_task(new_task);
 

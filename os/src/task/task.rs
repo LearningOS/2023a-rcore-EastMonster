@@ -1,12 +1,8 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-<<<<<<< HEAD
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{BIG_STRIDE, MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::fs::{File, Stdin, Stdout};
-=======
-use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM, BIG_STRIDE};
->>>>>>> 617f76d ([11/10] Chapter 5 Lab)
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -241,10 +237,10 @@ impl TaskControlBlock {
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
                     first_run_time: parent_inner.first_run_time, // NOT SURE
-                    syscall_times: parent_inner.syscall_times, // NOT SURE
-                    stride: parent_inner.stride, // NOT SURE
-                    priority: parent_inner.priority, // NOT SURE
-                    pass: parent_inner.pass, // NOT SURE
+                    syscall_times: parent_inner.syscall_times,   // NOT SURE
+                    stride: parent_inner.stride,                 // NOT SURE
+                    priority: parent_inner.priority,             // NOT SURE
+                    pass: parent_inner.pass,                     // NOT SURE
                 })
             },
         });

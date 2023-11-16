@@ -1,3 +1,4 @@
+//! Constants in the kernel
 
 #[allow(unused)]
 

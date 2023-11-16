@@ -22,11 +22,8 @@ mod switch;
 #[allow(rustdoc::private_intra_doc_links)]
 mod task;
 
-<<<<<<< HEAD
 use crate::fs::{open_file, OpenFlags};
-=======
-use crate::{loader::get_app_data_by_name, mm::{VirtAddr, check_allocated_range, check_unallocated_range, MapPermission}, config::MAX_SYSCALL_NUM};
->>>>>>> 617f76d ([11/10] Chapter 5 Lab)
+use crate::{mm::{VirtAddr, check_allocated_range, check_unallocated_range, MapPermission}, config::MAX_SYSCALL_NUM};
 use alloc::sync::Arc;
 pub use context::TaskContext;
 use lazy_static::*;

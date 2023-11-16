@@ -4,7 +4,7 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
-use super::File;
+use super::{File, Stat};
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
@@ -68,6 +68,26 @@ pub fn list_apps() {
         println!("{}", app);
     }
     println!("**************/");
+}
+
+/// 检查是否存在指定文件
+pub fn has_file(name: &str) -> bool {
+    ROOT_INODE.has_inode(name)
+}
+
+/// 获取 inode 状态
+pub fn inode_status(os_inode: Arc<dyn File + Send + Sync>) -> Stat {
+    os_inode.status().unwrap()
+}
+
+/// 新建一个硬链接
+pub fn linkat(old_name: &str, new_name: &str) -> u32 {
+    ROOT_INODE.link_at(old_name, new_name)
+}
+
+/// 取消一个硬链接
+pub fn unlinkat(path: &str) -> u32 {
+    ROOT_INODE.unlink_at(path)
 }
 
 bitflags! {
@@ -154,5 +174,16 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+    fn status(&self) -> Option<Stat> {
+        let inner = self.inner.exclusive_access();
+        let (ino, mode, nlink) = inner.inode.status();
+        Some(Stat {
+            dev: 0,
+            ino: ino as u64,
+            mode: super::StatMode { bits: mode },
+            nlink,
+            pad: [0; 7],
+        })
     }
 }

@@ -1,11 +1,13 @@
+use core::mem::size_of;
+
 use crate::{
     config::MAX_SYSCALL_NUM,
     fs::{open_file, OpenFlags},
-    mm::{translated_ref, translated_refmut, translated_str},
+    mm::{translated_ref, translated_refmut, translated_str, translated_byte_buffer},
     task::{
         current_process, current_task, current_user_token, exit_current_and_run_next, pid2process,
         suspend_current_and_run_next, SignalFlags, TaskStatus,
-    },
+    }, timer::get_time_us,
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
 
@@ -163,11 +165,53 @@ pub fn sys_kill(pid: usize, signal: u32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+    // 这个是要实现的, 不然中间某个测试会卡住...
+    /* 二阶段群 11 月 2 日的聊天记录:
+        OM14: log=trace 一下 会发现有个系统调用没实现
+        OM14: 同样有被坑到
+        bebopbe: 细说
+        菜鸡: get time吗
+        华华: 是的
+        华华: gettime 要实现
+        bebopbe: *哆啦A梦惊讶*
+    */
     trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_get_time",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
-    -1
+    let mut buffers =
+        translated_byte_buffer(current_user_token(), _ts as *const u8, size_of::<TimeVal>());
+    let time_us = get_time_us();
+
+    if buffers.is_empty() {
+        return -1;
+    }
+
+    let _t_s = time_us / 1_000_000;
+    let _t_us = time_us % 1_000_000;
+    if buffers.len() == 1 {
+        let buffer = buffers.get_mut(0).unwrap();
+        let ts = TimeVal {
+            sec: _t_s,
+            usec: _t_us,
+        };
+        unsafe {
+            // 参考: ChatGPT, 如何像 C 语言一样转成指定指针然后写数据
+            core::ptr::write(buffer.as_mut_ptr() as *mut TimeVal, ts); // buffer 前多加了个解引用就挂了...
+        }
+    } else {
+        // 被放在两页了. 一个变量不会跨页?
+        let _t_s_ptr = &_t_s as *const usize as *const u8;
+        let _t_us_ptr = &_t_us as *const usize as *const u8;
+        unsafe {
+            let buf_p1 = buffers.get_mut(0).unwrap();
+            core::ptr::write(buf_p1.as_mut_ptr() as *mut usize, _t_s);
+            let buf_p2 = buffers.get_mut(1).unwrap();
+            core::ptr::write(buf_p2.as_mut_ptr() as *mut usize, _t_us);
+        }
+    }
+
+    0
 }
 
 /// task_info syscall

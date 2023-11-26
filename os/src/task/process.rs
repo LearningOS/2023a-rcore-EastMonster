@@ -49,6 +49,16 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// 是否启用死锁检测
+    pub enable_deadlock_detect: bool,
+    /// 资源 (mutex + sem) 总数.  ~资源 ID (rid) 的分配器~ 最后发现用不到.
+    pub resource_count: usize,
+    /// Available 向量
+    pub ba_available: Vec<Option<usize>>,
+    /// Allocation 向量
+    pub ba_allocation: Vec<Option<Vec<usize>>>,
+    /// Need 向量
+    pub ba_need: Vec<Option<Vec<usize>>>,
 }
 
 impl ProcessControlBlockInner {
@@ -74,6 +84,21 @@ impl ProcessControlBlockInner {
     pub fn dealloc_tid(&mut self, tid: usize) {
         self.task_res_allocator.dealloc(tid)
     }
+    /// 分配一个 rid, 同时调整 available 向量, 扩展 need & allocation 的第二维
+    /// 没有回收单个 rid 的做法, 所以 rid 必定是连续的
+    pub fn alloc_rid(&mut self, count: usize) -> usize {
+        self.ba_available.push(Some(count));
+        self.ba_allocation
+            .iter_mut()
+            .filter(|t| t.is_some())
+            .for_each(|t| t.as_mut().unwrap().push(0));
+        self.ba_need
+            .iter_mut()
+            .filter(|t| t.is_some())
+            .for_each(|t| t.as_mut().unwrap().push(0));
+        self.resource_count += 1;
+        self.resource_count - 1
+    }
     /// the count of tasks(threads) in this process
     pub fn thread_count(&self) -> usize {
         self.tasks.len()
@@ -81,6 +106,71 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+    /// 进行死锁检测
+    pub fn deadlock_check(&self) -> bool {
+        if !self.enable_deadlock_detect {
+            return true;
+        }
+
+        let mut valid_tid = Vec::new();
+        // available 里面一定是连续的 Some, 因为没有销毁锁的说法...
+        // 其他的就要注意把中间的 None 除掉
+        let mut work = self.ba_available.clone();
+        let mut finish = self
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                if x.is_some() {
+                    valid_tid.push(i);
+                    Some(false)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        loop {
+            info!("=====BA LOOPING=====");
+            info!("WORK - before: {:?}", work);
+            'step2: for &tid in valid_tid.iter() {
+                if finish[tid].unwrap() == false {
+                    let ba_need_ref = self.ba_need[tid].as_ref().unwrap();
+                    info!(
+                        "TID: {}, NEED: {:?}, ALLOCATED: {:?}",
+                        tid,
+                        ba_need_ref,
+                        self.ba_allocation[tid].as_ref().unwrap()
+                    );
+                    if ba_need_ref
+                        .iter()
+                        .enumerate()
+                        .all(|(j, &need)| need <= work[j].unwrap())
+                    {
+                        work.iter_mut().enumerate().for_each(|(i, x)| {
+                            *x.as_mut().unwrap() += self.ba_allocation[tid].as_ref().unwrap()[i]
+                        });
+                        finish[tid] = Some(true);
+                        info!("WORK - after: {:?}", work);
+                        continue 'step2;
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            }
+            info!("===BA LOOPING END===");
+            if finish
+                .iter()
+                .filter(|x| x.is_some())
+                .all(|x| x.unwrap() == true)
+            {
+                return true;
+            } else {
+                return false;
+            }
+        }
     }
 }
 
@@ -119,6 +209,11 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    enable_deadlock_detect: false,
+                    resource_count: 0,
+                    ba_available: Vec::new(),
+                    ba_allocation: Vec::new(),
+                    ba_need: Vec::new(),
                 })
             },
         });
@@ -245,6 +340,11 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    enable_deadlock_detect: false,
+                    resource_count: 0,
+                    ba_available: Vec::new(),
+                    ba_allocation: Vec::new(),
+                    ba_need: Vec::new(),
                 })
             },
         });
@@ -267,6 +367,9 @@ impl ProcessControlBlock {
         // attach task to child process
         let mut child_inner = child.inner_exclusive_access();
         child_inner.tasks.push(Some(Arc::clone(&task)));
+        // 创建的时候就先处理一下 allocation 和 need.
+        child_inner.ba_allocation.push(Some(Vec::new()));
+        child_inner.ba_need.push(Some(Vec::new()));
         drop(child_inner);
         // modify kstack_top in trap_cx of this thread
         let task_inner = task.inner_exclusive_access();

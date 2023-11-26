@@ -3,7 +3,7 @@ use crate::{
     task::{add_task, current_task, TaskControlBlock},
     trap::{trap_handler, TrapContext},
 };
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 /// thread create syscall
 pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     trace!(
@@ -35,6 +35,24 @@ pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     let new_task_res = new_task_inner.res.as_ref().unwrap();
     let new_task_tid = new_task_res.tid;
     let mut process_inner = process.inner_exclusive_access();
+    // 新建进程时, 扩展 need & allocation 的第一维
+    let len = process_inner.ba_allocation.len();
+    // 其实就是 push...
+    let max_rid = process_inner.resource_count;
+    let mut new_vec = Vec::new();
+    for _ in 0..max_rid {
+        new_vec.push(0);
+    }
+    if new_task_tid >= len {
+        process_inner.ba_allocation.push(Some(new_vec.clone()));
+    } else {
+        process_inner.ba_allocation[new_task_tid] = Some(new_vec.clone());
+    }
+    if new_task_tid >= len {
+        process_inner.ba_need.push(Some(new_vec));
+    } else {
+        process_inner.ba_need[new_task_tid] = Some(new_vec);
+    }
     // add new thread to current process
     let tasks = &mut process_inner.tasks;
     while tasks.len() < new_task_tid + 1 {
@@ -112,6 +130,10 @@ pub fn sys_waittid(tid: usize) -> i32 {
     if let Some(exit_code) = exit_code {
         // dealloc the exited thread
         process_inner.tasks[tid] = None;
+        assert!(process_inner.ba_allocation[tid].is_some());
+        process_inner.ba_allocation[tid] = None;
+        assert!(process_inner.ba_need[tid].is_some());
+        process_inner.ba_need[tid] = None;
         exit_code
     } else {
         // waited thread has not exited

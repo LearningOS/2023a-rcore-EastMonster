@@ -52,6 +52,8 @@ impl Semaphore {
             .tid;
         let rid = inner.rid;
         process_inner.ba_allocation[tid].as_mut().unwrap()[rid] -= 1;
+        // [参考] 不用做条件判断
+        *process_inner.ba_available[rid].as_mut().unwrap() += 1;
 
         inner.count += 1;
         debug!(
@@ -65,8 +67,6 @@ impl Semaphore {
             if let Some(task) = inner.wait_queue.pop_front() {
                 wakeup_task(task);
             }
-        } else {
-            *process_inner.ba_available[rid].as_mut().unwrap() += 1;
         }
     }
 
@@ -93,13 +93,13 @@ impl Semaphore {
                 "[sys_semaphore_down] tid: {}, rid: {} - deadlock detected.",
                 tid, rid
             );
+            // [参考] 都死锁了, 这下不需要了
+            process_inner.ba_need[tid].as_mut().unwrap()[rid] -= 1;
             return false;
         }
         drop(process_inner);
-        drop(process);
 
         inner.count -= 1;
-        let after_count  = inner.count;
         debug!(
             "[semdown] tid: {}, rid: {}, count: {} -> {}",
             tid,
@@ -115,14 +115,11 @@ impl Semaphore {
 
         // 从别的地方调度回来了, 说明现在能 -1 了
         // 修改 Allocation 数组, 恢复对 Need 的修改
-        let process = current_process();
         let mut process_inner = process.inner_exclusive_access();
         process_inner.ba_need[tid].as_mut().unwrap()[rid] -= 1;
         process_inner.ba_allocation[tid].as_mut().unwrap()[rid] += 1;
-
-        if after_count >= 0 {
-            *process_inner.ba_available[rid].as_mut().unwrap() -= 1;
-        }
+        // [参考] 不用做条件判断
+        *process_inner.ba_available[rid].as_mut().unwrap() -= 1;
 
         true
     }

@@ -130,10 +130,10 @@ impl ProcessControlBlockInner {
                 }
             })
             .collect::<Vec<_>>();
-        loop {
-            info!("=====BA LOOPING=====");
+        info!("=====BA LOOPING=====");
+        'outer: loop {
             info!("WORK - before: {:?}", work);
-            'step2: for &tid in valid_tid.iter() {
+            for &tid in valid_tid.iter() {
                 if finish[tid].unwrap() == false {
                     let ba_need_ref = self.ba_need[tid].as_ref().unwrap();
                     info!(
@@ -152,24 +152,15 @@ impl ProcessControlBlockInner {
                         });
                         finish[tid] = Some(true);
                         info!("WORK - after: {:?}", work);
-                        continue 'step2;
-                    } else {
-                        continue;
+                        continue 'outer;
                     }
-                } else {
-                    continue;
                 }
             }
             info!("===BA LOOPING END===");
-            if finish
+            return finish
                 .iter()
                 .filter(|x| x.is_some())
-                .all(|x| x.unwrap() == true)
-            {
-                return true;
-            } else {
-                return false;
-            }
+                .all(|x| x.unwrap());
         }
     }
 }
